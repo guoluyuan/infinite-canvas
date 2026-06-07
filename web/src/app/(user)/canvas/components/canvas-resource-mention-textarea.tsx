@@ -89,7 +89,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     return (
         <div className={`relative h-full w-full ${containerClassName || ""}`}>
             {activeLabels.length ? (
-                <div ref={overlayRef} className={`${className || ""} pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words`} style={{ ...style, color: theme.node.text }}>
+                <div ref={overlayRef} className={`${className || ""} pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words`} style={{ ...style, color: theme.node.text }}>
                     <MentionHighlightText value={value || props.placeholder?.toString() || ""} labels={activeLabels} placeholder={!value} />
                 </div>
             ) : null}
@@ -101,7 +101,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     else if (forwardedRef) forwardedRef.current = node;
                 }}
                 value={value}
-                className={className}
+                className={`${className || ""} relative z-10`}
                 style={mergedStyle}
                 onChange={(event) => {
                     const next = event.target.value;

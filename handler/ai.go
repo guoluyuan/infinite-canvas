@@ -60,7 +60,7 @@ func proxyAIGetRequest(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
-	copyAIResponse(w, request, nil)
+	copyAIResponse(w, aiProxyCopyOptions{Request: request})
 }
 
 func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
@@ -88,6 +88,12 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		Fail(w, "AI 接口请求失败")
 		return
 	}
+	body, contentType, err = normalizeAIProxyRequestBody(body, contentType, modelName, path)
+	if err != nil {
+		log.Printf("AI proxy normalize request failed: model=%s path=%s err=%v", modelName, path, err)
+		Fail(w, "AI 接口请求失败")
+		return
+	}
 	path = resolveAIProxyPath(channel.BaseURL, modelName, path)
 	request, err := http.NewRequest(http.MethodPost, service.BuildModelChannelURL(channel, path), bytes.NewReader(body))
 	if err != nil {
@@ -95,28 +101,53 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		Fail(w, "AI 接口请求失败")
 		return
 	}
-	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
-	if contentType != "" {
-		request.Header.Set("Content-Type", contentType)
-	}
+	setAIProxyRequestHeaders(request, channel.APIKey, contentType)
 	if err := service.ConsumeUserCredits(user.ID, modelName, credits, path); err != nil {
 		FailError(w, err)
 		return
 	}
-	copyAIResponse(w, request, func() {
-		if err := service.RefundUserCredits(user.ID, modelName, credits, path); err != nil {
-			log.Printf("AI proxy refund credits failed: user=%s model=%s credits=%d err=%v", user.ID, modelName, credits, err)
-		}
-	})
+	options := aiProxyOptions(request, channel.APIKey, modelName, path, refundAIProxyCredits(user.ID, modelName, credits, path))
+	copyAIResponse(w, options)
 }
 
-func copyAIResponse(w http.ResponseWriter, request *http.Request, onFailure func()) {
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		log.Printf("AI proxy request failed: url=%s err=%v", request.URL.String(), err)
-		if onFailure != nil {
-			onFailure()
+func aiProxyOptions(request *http.Request, apiKey string, modelName string, path string, onFailure func()) aiProxyCopyOptions {
+	return aiProxyCopyOptions{
+		Request:   request,
+		OnFailure: onFailure,
+		APIKey:    apiKey,
+		ModelName: modelName,
+		Path:      path,
+	}
+}
+
+func refundAIProxyCredits(userID string, modelName string, credits int, path string) func() {
+	return func() {
+		if err := service.RefundUserCredits(userID, modelName, credits, path); err != nil {
+			log.Printf("AI proxy refund credits failed: user=%s model=%s credits=%d err=%v", userID, modelName, credits, err)
 		}
+	}
+}
+
+func setAIProxyRequestHeaders(request *http.Request, apiKey string, contentType string) {
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+}
+
+type aiProxyCopyOptions struct {
+	Request   *http.Request
+	OnFailure func()
+	APIKey    string
+	ModelName string
+	Path      string
+}
+
+func copyAIResponse(w http.ResponseWriter, options aiProxyCopyOptions) {
+	response, err := http.DefaultClient.Do(options.Request)
+	if err != nil {
+		log.Printf("AI proxy request failed: url=%s err=%v", options.Request.URL.String(), err)
+		options.fail()
 		Fail(w, "AI 接口请求失败")
 		return
 	}
@@ -124,14 +155,32 @@ func copyAIResponse(w http.ResponseWriter, request *http.Request, onFailure func
 
 	if response.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		log.Printf("AI upstream error: url=%s status=%d", request.URL.String(), response.StatusCode)
-		if onFailure != nil {
-			onFailure()
-		}
+		log.Printf("AI upstream error: url=%s status=%d", options.Request.URL.String(), response.StatusCode)
+		options.fail()
 		Fail(w, aiUpstreamStatusMessage(response.StatusCode, body))
 		return
 	}
 
+	if isGrokImageProxyResponse(options) {
+		copyGrokImageResponse(w, response, options)
+		return
+	}
+	copyAIResponseHeaders(w, response)
+	w.WriteHeader(response.StatusCode)
+	_, _ = io.Copy(w, response.Body)
+}
+
+func (options aiProxyCopyOptions) fail() {
+	if options.OnFailure != nil {
+		options.OnFailure()
+	}
+}
+
+func isGrokImageProxyResponse(options aiProxyCopyOptions) bool {
+	return options.APIKey != "" && isGrokImageModel(options.ModelName) && (options.Path == "/images/edits" || options.Path == "/images/generations")
+}
+
+func copyAIResponseHeaders(w http.ResponseWriter, response *http.Response) {
 	for key, values := range response.Header {
 		if strings.EqualFold(key, "Content-Length") {
 			continue
@@ -140,8 +189,6 @@ func copyAIResponse(w http.ResponseWriter, request *http.Request, onFailure func
 			w.Header().Add(key, value)
 		}
 	}
-	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
 }
 
 func readAIRequest(r *http.Request) ([]byte, string, string, error) {
@@ -230,76 +277,6 @@ func isArkSeedanceVideo(baseURL string, modelName string) bool {
 	base := strings.ToLower(baseURL)
 	model := strings.ToLower(modelName)
 	return strings.Contains(model, "seedance") || strings.Contains(model, "doubao-seedance") || strings.Contains(base, "/api/plan/v3")
-}
-
-func aiStatusMessage(statusCode int) string {
-	switch statusCode {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return "AI 接口鉴权失败，请检查 API Key、套餐权限或模型权限"
-	case http.StatusTooManyRequests:
-		return "AI 接口限流或额度不足，请稍后重试或检查额度"
-	default:
-		return "AI 接口请求失败"
-	}
-}
-
-func aiUpstreamStatusMessage(statusCode int, body []byte) string {
-	base := aiStatusMessage(statusCode)
-	detail := aiUpstreamErrorDetail(body)
-	if detail == "" {
-		return base
-	}
-	return base + "：" + detail
-}
-
-func aiUpstreamErrorDetail(body []byte) string {
-	text := strings.TrimSpace(string(body))
-	if text == "" {
-		return ""
-	}
-	var payload struct {
-		Msg     string `json:"msg"`
-		Message string `json:"message"`
-		Error   struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(body, &payload); err == nil {
-		if payload.Error.Message != "" {
-			if detail := friendlyUpstreamError(payload.Error.Code, payload.Error.Message); detail != "" {
-				return safeUpstreamText(detail)
-			}
-			if payload.Error.Code != "" {
-				return safeUpstreamText(payload.Error.Code + " " + payload.Error.Message)
-			}
-			return safeUpstreamText(payload.Error.Message)
-		}
-		if payload.Msg != "" {
-			return safeUpstreamText(payload.Msg)
-		}
-		if payload.Message != "" {
-			return safeUpstreamText(payload.Message)
-		}
-	}
-	return safeUpstreamText(text)
-}
-
-func friendlyUpstreamError(code string, message string) string {
-	lowerCode := strings.ToLower(strings.TrimSpace(code))
-	if strings.Contains(lowerCode, "inputvideosensitivecontentdetected") || strings.Contains(lowerCode, "privacyinformation") {
-		return strings.TrimSpace(code + " 参考视频疑似包含真人或隐私信息，火山方舟拒绝使用普通 URL 作为真人视频参考；请改用不含真人的视频、官方允许的模型产物，或已授权的 asset:// 素材。原始错误：" + message)
-	}
-	return ""
-}
-
-func safeUpstreamText(text string) string {
-	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	runes := []rune(text)
-	if len(runes) > 300 {
-		return string(runes[:300]) + "..."
-	}
-	return text
 }
 
 type aiError struct {

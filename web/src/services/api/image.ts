@@ -1,139 +1,21 @@
-import axios from "axios";
+import axios, { type AxiosProgressEvent } from "axios";
 
 import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
+import { applyGrokEditAspect, buildGrokEditPrompt, isGrokImageModel, resolveGrokEditModel, resolveGrokEditSize, resolveGrokGenerationSize } from "@/services/api/image-grok";
+import { parseImagePayload, type ImageApiResponse } from "@/services/api/image-response";
+import { normalizeQuality, resolveRequestSize } from "@/services/api/image-size";
 
 export type ChatCompletionMessage = {
     role: "system" | "user" | "assistant";
     content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 };
 
-type ImageApiResponse = {
-    data?: Array<Record<string, unknown>>;
-    error?: { message?: string };
-    code?: number;
-    msg?: string;
-};
-
-const QUALITY_BASE: Record<string, number> = {
-    low: 1024,
-    medium: 2048,
-    high: 2880,
-    standard: 1024,
-    hd: 2048,
-};
-const QUALITY_ALIASES: Record<string, string> = {
-    "1k": "low",
-    "2k": "medium",
-    "4k": "high",
-};
-const DEFAULT_IMAGE_SHORT_SIDE = 1024;
-const IMAGE_SIZE_STEP = 16;
-const IMAGE_MIN_PIXELS = 655360;
-const IMAGE_MAX_PIXELS = 8294400;
-const IMAGE_MAX_EDGE = 3840;
-const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
-
-function normalizeQuality(quality: string) {
-    const value = quality.trim().toLowerCase();
-    const normalized = QUALITY_ALIASES[value] || value;
-    return QUALITY_BASE[normalized] ? normalized : undefined;
-}
-
-/** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
-function resolveSize(quality: string | undefined, ratio: string): string {
-    const parsedRatio = parseImageRatio(ratio);
-    const basePixels = quality ? QUALITY_BASE[quality] : undefined;
-    const isLandscape = parsedRatio.width >= parsedRatio.height;
-    const longRatio = isLandscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
-    let longSide: number;
-    let shortSide: number;
-
-    if (basePixels) {
-        const targetPixels = basePixels * basePixels;
-        const longSideRaw = Math.sqrt(targetPixels * longRatio);
-        longSide = Math.floor(longSideRaw / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-        shortSide = Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    } else {
-        shortSide = DEFAULT_IMAGE_SHORT_SIDE;
-        longSide = Math.round((shortSide * longRatio) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    }
-
-    const width = isLandscape ? longSide : shortSide;
-    const height = isLandscape ? shortSide : longSide;
-    validateImageSize(width, height);
-    return `${width}x${height}`;
-}
-
-function parseImageRatio(value: string) {
-    const parts = value.split(":");
-    if (parts.length !== 2) throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
-    const w = Number(parts[0]);
-    const h = Number(parts[1]);
-    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) throw new Error("图像比例必须是正数，例如 9:16");
-    if (Math.max(w, h) / Math.min(w, h) > IMAGE_MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
-    return { width: w, height: h };
-}
-
-function parseImageDimensions(value: string) {
-    const match = value.match(/^(\d+)x(\d+)$/i);
-    if (!match) return null;
-    return { width: Number(match[1]), height: Number(match[2]) };
-}
-
-function validateImageSize(width: number, height: number) {
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("图像尺寸必须是正整数，例如 1024x1024");
-    if (width % IMAGE_SIZE_STEP !== 0 || height % IMAGE_SIZE_STEP !== 0) throw new Error("图像尺寸的宽高必须是 16 的倍数，请调整尺寸");
-    if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error("图像尺寸最长边不能超过 3840px，请调整尺寸");
-    if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
-    const pixels = width * height;
-    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图像总像素需在 655360 到 8294400 之间，请调整尺寸");
-}
-
-function resolveRequestSize(quality: string | undefined, size: string) {
-    const value = size.trim();
-    if (!value || value.toLowerCase() === "auto") return undefined;
-    const dimensions = parseImageDimensions(value);
-    if (dimensions) {
-        validateImageSize(dimensions.width, dimensions.height);
-        return `${dimensions.width}x${dimensions.height}`;
-    }
-    if (value.includes(":")) return resolveSize(quality, value);
-    throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
-}
-
-function resolveImageDataUrl(item: Record<string, unknown>) {
-    if (typeof item.b64_json === "string" && item.b64_json) {
-        return `data:image/png;base64,${item.b64_json}`;
-    }
-    if (typeof item.url === "string" && item.url) {
-        return item.url;
-    }
-    return null;
-}
-
-function parseImagePayload(payload: ImageApiResponse) {
-    if (typeof payload.code === "number" && payload.code !== 0) {
-        throw new Error(payload.msg || "请求失败");
-    }
-    const images =
-        payload.data
-            ?.map(resolveImageDataUrl)
-            .filter((value): value is string => Boolean(value))
-            .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
-
-    if (images.length === 0) {
-        throw new Error("接口没有返回图片");
-    }
-
-    return images;
-}
 
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
@@ -161,6 +43,39 @@ function parseStreamChunk(chunk: string, onDelta: (value: string) => void) {
         deltaText += delta;
     }
     if (deltaText) onDelta(deltaText);
+}
+
+function appendStreamAnswer(chunk: string, answer: string, onDelta: (text: string) => void) {
+    let nextAnswer = answer;
+    parseStreamChunk(chunk, (delta) => {
+        nextAnswer += delta;
+        onDelta(nextAnswer);
+    });
+    return nextAnswer;
+}
+
+function createTextStreamReader(onChunk: (chunk: string) => void) {
+    let buffer = "";
+    let processedLength = 0;
+    return {
+        handle(event: AxiosProgressEvent) {
+            const responseText = readProgressResponseText(event);
+            const nextText = responseText.slice(processedLength);
+            processedLength = responseText.length;
+            buffer += nextText;
+            const chunks = buffer.split("\n\n");
+            buffer = chunks.pop() || "";
+            chunks.forEach(onChunk);
+        },
+        flush() {
+            if (buffer) onChunk(buffer);
+        },
+    };
+}
+
+function readProgressResponseText(event: AxiosProgressEvent) {
+    const target = event.event?.target as { responseText?: string } | undefined;
+    return String(target?.responseText || "");
 }
 
 function withSystemPrompt(config: AiConfig, prompt: string) {
@@ -194,27 +109,43 @@ function withSystemMessage(config: AiConfig, messages: ChatCompletionMessage[]) 
     return systemPrompt ? [{ role: "system" as const, content: systemPrompt }, ...messages] : messages;
 }
 
+function assertChatStreamResponse(data: unknown) {
+    if (typeof data === "object" && data && "code" in data && (data as { code?: number }).code !== 0) {
+        throw new Error((data as { msg?: string }).msg || "请求失败");
+    }
+    if (typeof data !== "string") return;
+    let apiError = "";
+    try {
+        const payload = JSON.parse(data) as { code?: number; msg?: string };
+        if (typeof payload.code === "number" && payload.code !== 0) apiError = payload.msg || "请求失败";
+    } catch {
+        // ignore plain text stream content
+    }
+    if (apiError) throw new Error(apiError);
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const isGrokImage = isGrokImageModel(config.model);
+    const quality = isGrokImage ? undefined : normalizeQuality(config.quality);
+    const requestSize = isGrokImage ? resolveGrokGenerationSize(config.size) : resolveRequestSize(quality, config.size);
     try {
         const response = await axios.post<ImageApiResponse>(
             aiApiUrl(config, "/images/generations"),
             {
                 model: config.model,
                 prompt: withSystemPrompt(config, prompt),
-                n,
+                ...(!isGrokImage || n > 1 ? { n } : {}),
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 response_format: "b64_json",
-                output_format: IMAGE_OUTPUT_FORMAT,
+                ...(!isGrokImage ? { output_format: IMAGE_OUTPUT_FORMAT } : {}),
             },
             {
                 headers: aiHeaders(config, "application/json"),
             },
         );
-        const images = parseImagePayload(response.data);
+        const images = await parseImagePayload(response.data, config);
         refreshRemoteUser(config);
         return images;
     } catch (error) {
@@ -224,28 +155,30 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
-    const requestPrompt = buildImageReferencePromptText(prompt, references);
+    const isGrokEdit = isGrokImageModel(config.model);
+    const quality = isGrokEdit ? undefined : normalizeQuality(config.quality);
+    const requestSize = isGrokEdit ? resolveGrokEditSize() : resolveRequestSize(quality, config.size);
+    const referencePrompt = buildImageReferencePromptText(prompt, references);
+    const requestPrompt = isGrokEdit ? buildGrokEditPrompt(referencePrompt, config.size) : referencePrompt;
     const formData = new FormData();
-    formData.set("model", config.model);
+    formData.set("model", resolveGrokEditModel(config));
     formData.set("prompt", withSystemPrompt(config, requestPrompt));
     formData.set("n", String(n));
     formData.set("response_format", "b64_json");
-    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
-    if (quality) {
+    if (!isGrokEdit) formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+    if (!isGrokEdit && quality) {
         formData.set("quality", quality);
     }
-    if (requestSize) {
-        formData.set("size", requestSize);
-    }
+    if (requestSize) formData.set("size", requestSize);
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    files.forEach((file) => formData.append("image", file));
+    files.forEach((file) => formData.append(isGrokEdit ? "image[]" : "image", file));
+    if (isGrokEdit && mask) throw new Error("Grok 图片编辑暂不支持蒙版");
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config) });
-        const images = parseImagePayload(response.data);
+        const parsedImages = await parseImagePayload(response.data, config);
+        const images = isGrokEdit ? await applyGrokEditAspect(parsedImages, config.size) : parsedImages;
         refreshRemoteUser(config);
         return images;
     } catch (error) {
@@ -254,9 +187,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 }
 
 export async function requestImageQuestion(config: AiConfig, messages: ChatCompletionMessage[], onDelta: (text: string) => void) {
-    let buffer = "";
     let answer = "";
-    let processedLength = 0;
+    const streamReader = createTextStreamReader((chunk) => {
+        answer = appendStreamAnswer(chunk, answer, onDelta);
+    });
 
     try {
         const response = await axios.post(
@@ -271,43 +205,11 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
                     ...aiHeaders(config, "application/json"),
                 } as Record<string, string>,
                 responseType: "text",
-                onDownloadProgress: (event) => {
-                    const responseText = String(event.event?.target?.responseText || "");
-                    const nextText = responseText.slice(processedLength);
-                    processedLength = responseText.length;
-                    buffer += nextText;
-                    const chunks = buffer.split("\n\n");
-                    buffer = chunks.pop() || "";
-                    for (const chunk of chunks) {
-                        parseStreamChunk(chunk, (delta) => {
-                            answer += delta;
-                            onDelta(answer);
-                        });
-                    }
-                },
+                onDownloadProgress: streamReader.handle,
             },
         );
-        if (typeof response.data === "object" && response.data && "code" in response.data && (response.data as { code?: number; msg?: string }).code !== 0) {
-            throw new Error((response.data as { msg?: string }).msg || "请求失败");
-        }
-        if (typeof response.data === "string") {
-            let apiError = "";
-            try {
-                const payload = JSON.parse(response.data) as { code?: number; msg?: string };
-                if (typeof payload.code === "number" && payload.code !== 0) {
-                    apiError = payload.msg || "请求失败";
-                }
-            } catch {
-                // ignore plain text stream content
-            }
-            if (apiError) throw new Error(apiError);
-        }
-        if (buffer) {
-            parseStreamChunk(buffer, (delta) => {
-                answer += delta;
-                onDelta(answer);
-            });
-        }
+        assertChatStreamResponse(response.data);
+        streamReader.flush();
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
     }

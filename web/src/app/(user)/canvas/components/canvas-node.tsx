@@ -13,6 +13,7 @@ import type { CanvasResourceReference } from "../utils/canvas-resource-reference
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
+const NODE_PANEL_MIN_WIDTH = 500;
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
@@ -329,7 +330,11 @@ export const CanvasNode = React.memo(function CanvasNode({
             <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
             <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
 
-            {showPanel && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[500px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
+            {showPanel && renderPanel ? (
+                <div className="absolute left-1/2 top-full z-[70] -translate-x-1/2 pt-4" style={{ width: data.width, minWidth: NODE_PANEL_MIN_WIDTH }}>
+                    {renderPanel(data)}
+                </div>
+            ) : null}
         </div>
     );
 });
