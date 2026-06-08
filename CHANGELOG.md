@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.2.7 - 2026-06-08
+
++ [修复] 修复 Grok 视频生成成功但结果节点无法播放的问题，支持解析 JSON 包装的视频 URL 或 base64。
++ [修复] 版本检查、GitHub 入口和文档站仓库链接改为当前 `guoluyuan/infinite-canvas` 仓库。
++ [修复] 文档站 Docker Compose 镜像地址改为当前仓库的 GHCR 文档镜像。
+
 ## v0.2.6 - 2026-06-08
 
 + [新增] Docker 部署文档改为支持 Docker Hub 首次部署和 Watchtower 自动更新。

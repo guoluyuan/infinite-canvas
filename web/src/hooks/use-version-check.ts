@@ -3,8 +3,9 @@ import { App } from "antd";
 import { APP_VERSION } from "@/constant/env";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
 
-const latestVersionUrl = "https://raw.githubusercontent.com/guoluyuan/infinite-canvas/main/VERSION";
-const latestChangelogUrl = "https://raw.githubusercontent.com/guoluyuan/infinite-canvas/main/CHANGELOG.md";
+const repositoryRawBaseUrl = "https://raw.githubusercontent.com/guoluyuan/infinite-canvas/main";
+const latestVersionUrl = `${repositoryRawBaseUrl}/VERSION`;
+const latestChangelogUrl = `${repositoryRawBaseUrl}/CHANGELOG.md`;
 
 function readLocalReleases(): ReleaseInfo[] {
     try {
