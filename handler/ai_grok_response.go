@@ -48,7 +48,8 @@ func replaceGrokImageURLs(ctx context.Context, raw []byte, apiKey string) (map[s
 	if !ok {
 		return payload, false, nil
 	}
-	return payload, replaceGrokImageItems(ctx, items, apiKey)
+	changed, err := replaceGrokImageItems(ctx, items, apiKey)
+	return payload, changed, err
 }
 
 func replaceGrokImageItems(ctx context.Context, items []interface{}, apiKey string) (bool, error) {

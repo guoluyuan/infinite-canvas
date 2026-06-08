@@ -6,8 +6,8 @@
 
 <p align="center">
   <a href="https://linux.do/"><img src="https://img.shields.io/badge/Linux.do-Community-2b6de8?style=flat-square" alt="Linux.do"></a>
-  <a href="https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
-  <a href="https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/github/stars/basketikun/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <a href="https://render.com/deploy?repo=https://github.com/guoluyuan/infinite-canvas"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
+  <a href="https://github.com/guoluyuan/infinite-canvas"><img src="https://img.shields.io/github/stars/guoluyuan/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
   <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.2.0-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-ready-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker ready"></a>
@@ -41,10 +41,10 @@
 
 ## 快速开始
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/guoluyuan/infinite-canvas)
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
+git clone git@github.com:guoluyuan/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
 # 修改默认账号密码等信息
@@ -59,6 +59,40 @@ docker compose -f docker-compose.local.yml up -d --build
 ```
 
 运行后默认端口3000，可访问 `http://localhost:3000`。
+
+## Docker 部署
+
+首次部署可以直接使用 Docker Hub 镜像：
+
+```bash
+git clone git@github.com:guoluyuan/infinite-canvas.git
+cd infinite-canvas
+cp .env.example .env
+# 修改默认账号密码等信息
+docker-compose up -d
+```
+
+镜像地址：
+
+```text
+mp740429299/guogai-infinite-canvas:latest
+mp740429299/guogai-infinite-canvas:v0.2.5
+```
+
+`docker-compose.yml` 已包含 Watchtower 自动更新。后续同标签镜像发布后，容器会自动拉取新镜像并重启应用。
+
+手动更新：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+数据会保存到当前目录的 `data/`：
+
+```text
+./data:/app/data
+```
 
 如需要拉取提示词，可前往:`http://localhost:3000/admin/prompts`
 
@@ -92,14 +126,14 @@ https://infinite-canvas-cpco.onrender.com?apiKey={key}&baseUrl={address}
 
 ## 文档
 
-- [功能介绍](docs2/features.md)
-- [部署说明](docs2/deployment.md)
-- [画布节点操作手册](docs2/canvas-node-manual.md)
-- [画布快捷键](docs2/canvas-shortcuts.md)
-- [待办事项](docs2/todo.md)
-- [后端数据库说明](docs2/backend-database.md)
-- [系统配置数据结构](docs2/system-settings.md)
-- [接口响应约定](docs2/api-response.md)
+- [功能介绍](docs/content/docs/overview/features.mdx)
+- [Docker 部署](docs/content/docs/overview/docker.mdx)
+- [画布节点操作手册](docs/content/docs/canvas/canvas-node-manual.mdx)
+- [画布快捷键](docs/content/docs/canvas/canvas-shortcuts.mdx)
+- [待办事项](docs/content/docs/progress/todo.mdx)
+- [后端数据库说明](docs/content/docs/backend/backend-database.mdx)
+- [系统配置数据结构](docs/content/docs/backend/system-settings.mdx)
+- [接口响应约定](docs/content/docs/backend/api-response.mdx)
 
 ## 赞助支持
 
@@ -130,10 +164,10 @@ https://infinite-canvas-cpco.onrender.com?apiKey={key}&baseUrl={address}
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=basketikun%2Finfinite-canvas&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=guoluyuan%2Finfinite-canvas&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&legend=top-left" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=guoluyuan/infinite-canvas&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=guoluyuan/infinite-canvas&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=guoluyuan/infinite-canvas&type=date&legend=top-left" />
  </picture>
 </a>

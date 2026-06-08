@@ -10,16 +10,29 @@ description: 使用 Docker Compose 部署无限画布
 ## 使用发布镜像
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
+git clone git@github.com:guoluyuan/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
-docker compose up -d
+# 修改默认账号密码等信息
+docker-compose up -d
 ```
 
 启动后访问：
 
 ```text
 http://localhost:3000
+```
+
+`docker-compose.yml` 默认使用：
+
+```text
+mp740429299/guogai-infinite-canvas:latest
+```
+
+同一个 Compose 文件包含 Watchtower 自动更新服务。发布新镜像后，把镜像推送到同一个标签即可自动拉取并重启应用：
+
+```bash
+docker push mp740429299/guogai-infinite-canvas:latest
 ```
 
 默认管理员账号：

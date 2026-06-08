@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
+    image: mp740429299/guogai-infinite-canvas:latest
     container_name: infinite-canvas
     env_file:
       - .env
@@ -8,4 +8,14 @@ services:
       - ./data:/app/data
     ports:
       - "3000:3000"
+    restart: unless-stopped
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: infinite-canvas-watchtower
+    command: --cleanup --label-enable --interval 300
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped

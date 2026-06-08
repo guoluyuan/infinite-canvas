@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- GitHub 首页 README 和文档站快速开始改为从 `guoluyuan/infinite-canvas` clone 后用 `docker-compose up -d` 部署，并保留 Docker Hub 镜像与 Watchtower 自动更新说明；需要验证 GitHub 页面链接可正常打开。
+- Docker Compose 主应用镜像改为 `mp740429299/guogai-infinite-canvas:latest`，并新增 Watchtower 自动更新服务；需要验证推送同标签镜像后容器会自动拉取新镜像、重启应用并清理旧镜像。
 - 画布图片、视频等节点底部生成面板会随节点宽度一起变宽，并保留原有最小宽度；需要验证放大节点后提示词输入区和模型/参数按钮更易读，小节点面板不变窄。
 - Grok 图生图请求改为使用 `grok-imagine-image-edit`、`image[]` multipart 字段和上游唯一支持的 `1024x1024` 编辑尺寸，并在返回后按画布/工作台选择的宽高比裁切最终图片；需要验证本地直连和后台渠道转发下，选择 `9:16` 时不再报尺寸错误并生成竖图节点。
 - 画布节点底部提示词输入框在显示 `图片1`、`视频1` 等引用高亮时，会把高亮覆盖层放到输入框后面；需要验证选中图片节点输入文字时光标可见。
