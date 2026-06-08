@@ -8,7 +8,7 @@
   <a href="https://linux.do/"><img src="https://img.shields.io/badge/Linux.do-Community-2b6de8?style=flat-square" alt="Linux.do"></a>
   <a href="https://render.com/deploy?repo=https://github.com/guoluyuan/infinite-canvas"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
   <a href="https://github.com/guoluyuan/infinite-canvas"><img src="https://img.shields.io/github/stars/guoluyuan/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.2.7-2563eb?style=flat-square" alt="Version"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.2.8-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-ready-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker ready"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
@@ -76,7 +76,7 @@ docker-compose up -d
 
 ```text
 mp740429299/guogai-infinite-canvas:latest
-mp740429299/guogai-infinite-canvas:v0.2.7
+mp740429299/guogai-infinite-canvas:v0.2.8
 ```
 
 `docker-compose.yml` 已包含 Watchtower 自动更新。后续同标签镜像发布后，容器会自动拉取新镜像并重启应用。

@@ -22,6 +22,7 @@ type CanvasNodeHoverToolbarProps = {
     onDecreaseFont: (node: CanvasNodeData) => void;
     onIncreaseFont: (node: CanvasNodeData) => void;
     onToggleDialog: (node: CanvasNodeData) => void;
+    onOpenConfig: () => void;
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
@@ -58,6 +59,7 @@ export function CanvasNodeHoverToolbar({
     onDecreaseFont,
     onIncreaseFont,
     onToggleDialog,
+    onOpenConfig,
     onGenerateImage,
     onUpload,
     onDownload,
@@ -141,7 +143,7 @@ export function CanvasNodeHoverToolbar({
         ...(canOpenDialog ? [{ id: "edit", title: "编辑", label: "编辑", icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isText ? [{ id: "editText", title: "编辑文本", label: "编辑文字", icon: <Pencil className="size-4" />, onClick: () => onEditText(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: "用文本生图", label: "生图", icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),
-        ...(isConfig ? [{ id: "config", title: "生成配置", label: "生成配置", icon: <Settings2 className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
+        ...(isConfig ? [{ id: "config", title: "生成配置", label: "生成配置", icon: <Settings2 className="size-4" />, onClick: onOpenConfig }] : []),
         ...(isText ? [{ id: "decreaseFont", title: "减小字号", label: "缩小", icon: <Minus className="size-4" />, onClick: () => onDecreaseFont(node) }] : []),
         ...(isText ? [{ id: "increaseFont", title: "增大字号", label: "放大", icon: <Plus className="size-4" />, onClick: () => onIncreaseFont(node) }] : []),
         ...(isImage && !hasImage ? [{ id: "uploadImage", title: "上传图片", label: "上传图片", icon: <Upload className="size-4" />, onClick: () => onUpload(node) }] : []),

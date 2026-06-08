@@ -2431,6 +2431,7 @@ function InfiniteCanvasPage() {
                     onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}
                     onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
                     onToggleDialog={(node) => setDialogNodeId((current) => (current === node.id ? null : node.id))}
+                    onOpenConfig={() => openConfigDialog(false)}
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
@@ -2457,7 +2458,7 @@ function InfiniteCanvasPage() {
                     onAddVideo={() => createNode(CanvasNodeType.Video)}
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
                     onAddText={() => createNode(CanvasNodeType.Text)}
-                    onAddConfig={() => createNode(CanvasNodeType.Config)}
+                    onOpenConfig={() => openConfigDialog(false)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
