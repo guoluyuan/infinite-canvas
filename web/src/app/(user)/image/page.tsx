@@ -19,47 +19,10 @@ import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { useImageGenerationTaskStore, type GeneratedImage, type GenerationLog, type GenerationLogConfig, type GenerationResult, type GenerationRunContext, type GenerationSnapshot } from "@/stores/use-image-generation-task-store";
 import type { ReferenceImage } from "@/types/image";
 
-type GeneratedImage = {
-    id: string;
-    dataUrl: string;
-    storageKey?: string;
-    durationMs: number;
-    width: number;
-    height: number;
-    bytes: number;
-    mimeType?: string;
-};
-
-type GenerationResult = {
-    id: string;
-    status: "pending" | "success" | "failed";
-    image?: GeneratedImage;
-    error?: string;
-};
-
-type GenerationLog = {
-    id: string;
-    createdAt: number;
-    title: string;
-    prompt: string;
-    time: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    imageCount: number;
-    size: string;
-    quality: string;
-    status: "成功" | "失败";
-    images: GeneratedImage[];
-    thumbnails: string[];
-};
-
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
+type LogPanelActionProps = { allSelected: boolean; hasSelectableLogs: boolean; hasSelectedLogs: boolean; onCreate: () => void; onDelete: () => void; onToggleAll: () => void };
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -70,6 +33,7 @@ const logStore = localforage.createInstance({ name: "infinite-canvas", storeName
 export default function ImagePage() {
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const restoredRunningLogIdRef = useRef<string | null>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -80,30 +44,55 @@ export default function ImagePage() {
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
-    const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-    const [startedAt, setStartedAt] = useState(0);
-    const [elapsedMs, setElapsedMs] = useState(0);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const runningLog = useImageGenerationTaskStore((state) => state.runningLog);
+    const runningResults = useImageGenerationTaskStore((state) => state.runningResults);
+    const startedAt = useImageGenerationTaskStore((state) => state.startedAt);
+    const elapsedMs = useImageGenerationTaskStore((state) => state.elapsedMs);
+    const activeRunningLogId = useImageGenerationTaskStore((state) => state.activeRunningLogId);
+    const startTask = useImageGenerationTaskStore((state) => state.startTask);
+    const updateElapsedMs = useImageGenerationTaskStore((state) => state.updateElapsedMs);
+    const setActiveRunningLogId = useImageGenerationTaskStore((state) => state.setActiveRunningLogId);
+    const updateTaskResultAt = useImageGenerationTaskStore((state) => state.updateResultAt);
+    const stopTask = useImageGenerationTaskStore((state) => state.stopTask);
+    const finishTask = useImageGenerationTaskStore((state) => state.finishTask);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
+    const running = Boolean(runningLog);
+    const visibleLogs = runningLog ? [runningLog, ...logs] : logs;
+    const activeLogId = previewLog?.id || (runningLog?.id === activeRunningLogId ? runningLog.id : undefined);
+    const stopping = runningLog?.status === "已终止";
 
     useEffect(() => {
         if (!running || !startedAt) return;
-        const timer = window.setInterval(() => setElapsedMs(performance.now() - startedAt), 1000);
+        const timer = window.setInterval(() => {
+            const durationMs = performance.now() - startedAt;
+            updateElapsedMs(durationMs);
+        }, 1000);
         return () => window.clearInterval(timer);
-    }, [running, startedAt]);
+    }, [running, startedAt, updateElapsedMs]);
 
     useEffect(() => {
         void refreshLogs();
     }, []);
+
+    useEffect(() => {
+        if (activeRunningLogId && runningLog?.id === activeRunningLogId) setResults(runningResults);
+    }, [activeRunningLogId, runningLog?.id, runningResults]);
+
+    useEffect(() => {
+        if (!runningLog || activeRunningLogId !== runningLog.id || restoredRunningLogIdRef.current === runningLog.id) return;
+        restoredRunningLogIdRef.current = runningLog.id;
+        restoreRunningLogView(runningLog);
+    }, [activeRunningLogId, runningLog?.id, runningLog]);
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -137,6 +126,18 @@ export default function ImagePage() {
         }
     };
 
+    const showGenerationMessage = (aborted: boolean, successCount: number, failed?: PromiseRejectedResult) => {
+        if (aborted) {
+            message.warning(successCount ? "已终止，保留已完成图片" : "已终止");
+            return;
+        }
+        if (successCount) {
+            message.success("图片已生成");
+            return;
+        }
+        message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
+    };
+
     const generate = async () => {
         const text = prompt.trim();
         if (!text) {
@@ -152,20 +153,25 @@ export default function ImagePage() {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
 
-        setElapsedMs(0);
-        setRunning(true);
-        setPreviewLog(null);
-        setResults(Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" })));
+        const controller = new AbortController();
         const batchStartedAt = performance.now();
-        setStartedAt(batchStartedAt);
+        const initialResults = Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" as const }));
+        const batchLog = buildRunningLog({ text, model, snapshot, count: generationCount });
+        const context = { logId: batchLog.id, signal: controller.signal };
 
-        const tasks = Array.from({ length: generationCount }, (_, index) => runGenerationSlot(index, snapshot));
+        startTask({ log: batchLog, results: initialResults, startedAt: batchStartedAt, controller });
+        setPreviewLog(null);
+        setResults(initialResults);
+
+        const tasks = Array.from({ length: generationCount }, (_, index) => runGenerationSlot(index, snapshot, context));
 
         const result = await Promise.allSettled(tasks);
         const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage> => item.status === "fulfilled").map((item) => item.value);
         const successCount = successImages.length;
-        const failCount = generationCount - successCount;
         const failed = result.find((item): item is PromiseRejectedResult => item.status === "rejected");
+        const aborted = controller.signal.aborted;
+        const interrupted = aborted && successCount < generationCount;
+        const failCount = interrupted ? 0 : generationCount - successCount;
 
         try {
             const logImages = await Promise.all(
@@ -174,23 +180,23 @@ export default function ImagePage() {
                     return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
                 }),
             );
-            saveLog(
-                buildLog({
-                    prompt: text,
-                    model,
-                    config: { ...snapshot.config, count: String(generationCount) },
-                    references: snapshot.references,
-                    durationMs: performance.now() - batchStartedAt,
-                    successCount,
-                    failCount,
-                    status: successCount ? "成功" : "失败",
-                    images: logImages,
-                }),
-            );
-            successCount ? message.success("图片已生成") : message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
+            const finalLog = finishRunningLog(batchLog, {
+                durationMs: performance.now() - batchStartedAt,
+                successCount,
+                failCount,
+                status: interrupted ? "已终止" : successCount ? "成功" : "失败",
+                images: logImages,
+            });
+            if (useImageGenerationTaskStore.getState().activeRunningLogId === batchLog.id) setPreviewLog(finalLog);
+            saveLog(finalLog);
+            showGenerationMessage(interrupted, successCount, failed);
         } finally {
-            setRunning(false);
+            finishTask(controller);
         }
+    };
+
+    const stopGeneration = () => {
+        if (stopTask()) message.warning("正在终止");
     };
 
     const downloadImage = (image: GeneratedImage, index: number) => {
@@ -230,11 +236,10 @@ export default function ImagePage() {
     };
 
     const createSession = () => {
+        setActiveRunningLogId(null);
         setPrompt("");
         setReferences([]);
         setResults([]);
-        setElapsedMs(0);
-        setStartedAt(0);
         setSelectedLogIds([]);
         setPreviewLog(null);
     };
@@ -243,6 +248,7 @@ export default function ImagePage() {
         const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
         void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
+            setActiveRunningLogId(null);
             setPreviewLog(null);
             setResults([]);
         }
@@ -257,7 +263,28 @@ export default function ImagePage() {
     const refreshLogs = async () => setLogs(await readStoredLogs());
 
     const previewGenerationLog = async (log: GenerationLog) => {
+        if (runningLog?.id === log.id) {
+            setActiveRunningLogId(log.id);
+            restoreRunningLogView(log);
+            return;
+        }
+        restoreStoredLogView(log);
+        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
+    };
+
+    const restoreStoredLogView = (log: GenerationLog) => {
+        setActiveRunningLogId(null);
         setPreviewLog(log);
+        restoreLogInputs(log);
+    };
+
+    const restoreRunningLogView = (log: GenerationLog) => {
+        setPreviewLog(null);
+        restoreLogInputs(log);
+        setResults(useImageGenerationTaskStore.getState().runningResults);
+    };
+
+    const restoreLogInputs = (log: GenerationLog) => {
         setLogsOpen(false);
         setPrompt(log.prompt);
         setReferences(log.references || []);
@@ -265,7 +292,6 @@ export default function ImagePage() {
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
-        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
     };
 
     const buildRequestSnapshot = () => {
@@ -282,20 +308,32 @@ export default function ImagePage() {
         return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
-    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
+    const runGenerationSlot = async (index: number, snapshot: GenerationSnapshot, context?: GenerationRunContext) => {
         const itemStartedAt = performance.now();
         try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
+            const options = context ? { signal: context.signal } : undefined;
+            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, options) : await requestGeneration(snapshot.config, snapshot.text, options);
             const image = result[0];
             if (!image) throw new Error("接口没有返回图片");
             const meta = await readImageMeta(image.dataUrl);
             const nextImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl) };
-            setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
+            updateGenerationResult(index, { status: "success", image: nextImage }, context);
             return nextImage;
         } catch (error) {
-            setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : "生成失败" }));
+            const errorMessage = context?.signal.aborted ? "已终止" : error instanceof Error ? error.message : "生成失败";
+            updateGenerationResult(index, { status: "failed", error: errorMessage }, context);
             throw error;
         }
+    };
+
+    const updateGenerationResult = (index: number, next: Partial<GenerationResult>, context?: GenerationRunContext) => {
+        if (!context) {
+            setResults((value) => updateResultAt(value, index, next));
+            return;
+        }
+        updateTaskResultAt(index, next, context.logId);
+        const state = useImageGenerationTaskStore.getState();
+        if (state.activeRunningLogId === context.logId) setResults(state.runningResults);
     };
 
     const retryResult = (index: number) => {
@@ -311,9 +349,10 @@ export default function ImagePage() {
             <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
-                        logs={logs}
+                        logs={visibleLogs}
+                        runningLogId={runningLog?.id}
                         selectedLogIds={selectedLogIds}
-                        activeLogId={previewLog?.id}
+                        activeLogId={activeLogId}
                         onSelectedLogIdsChange={setSelectedLogIds}
                         onCreateSession={createSession}
                         onDeleteSelected={() => setDeleteConfirmOpen(true)}
@@ -420,7 +459,14 @@ export default function ImagePage() {
                             <div>
                                 <h2 className="text-xl font-semibold">生成结果</h2>
                             </div>
-                            {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
+                            {running ? (
+                                <div className="flex items-center gap-2">
+                                    <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag>
+                                    <Button size="small" danger disabled={stopping} onClick={stopGeneration}>
+                                        {stopping ? "终止中" : "终止"}
+                                    </Button>
+                                </div>
+                            ) : null}
                         </div>
                         {results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
@@ -456,9 +502,10 @@ export default function ImagePage() {
             />
             <Drawer title="生成记录" placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
                 <LogPanel
-                    logs={logs}
+                    logs={visibleLogs}
+                    runningLogId={runningLog?.id}
                     selectedLogIds={selectedLogIds}
-                    activeLogId={previewLog?.id}
+                    activeLogId={activeLogId}
                     onSelectedLogIdsChange={setSelectedLogIds}
                     onCreateSession={createSession}
                     onDeleteSelected={() => setDeleteConfirmOpen(true)}
@@ -583,6 +630,7 @@ function updateResultAt(results: GenerationResult[], index: number, next: Partia
 
 function LogPanel({
     logs,
+    runningLogId,
     selectedLogIds,
     activeLogId,
     onSelectedLogIdsChange,
@@ -591,6 +639,7 @@ function LogPanel({
     onPreviewLog,
 }: {
     logs: GenerationLog[];
+    runningLogId?: string;
     selectedLogIds: string[];
     activeLogId?: string;
     onSelectedLogIdsChange: (ids: string[]) => void;
@@ -598,33 +647,20 @@ function LogPanel({
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
 }) {
-    const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
-    const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
+    const selectableLogs = logs.filter((log) => log.id !== runningLogId);
+    const allSelected = Boolean(selectableLogs.length) && selectedLogIds.length === selectableLogs.length;
+    const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : selectableLogs.map((log) => log.id));
 
     return (
         <>
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                    <h2 className="text-base font-semibold">生成记录</h2>
-                </div>
-                <Tag className="m-0">{logs.length}</Tag>
-            </div>
-            <div className="mb-4 flex flex-wrap gap-2">
-                <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>
-                    新建
-                </Button>
-                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={toggleAll}>
-                    {allSelected ? "取消" : "全选"}
-                </Button>
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
-                    删除
-                </Button>
-            </div>
+            <LogPanelHeader count={logs.length} />
+            <LogPanelActions allSelected={allSelected} hasSelectableLogs={Boolean(selectableLogs.length)} hasSelectedLogs={Boolean(selectedLogIds.length)} onCreate={onCreateSession} onDelete={onDeleteSelected} onToggleAll={toggleAll} />
             <div className="space-y-3">
                 {logs.map((log) => (
                     <LogCard
                         key={log.id}
                         log={log}
+                        running={log.id === runningLogId}
                         selected={selectedLogIds.includes(log.id)}
                         active={activeLogId === log.id}
                         onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
@@ -637,7 +673,34 @@ function LogPanel({
     );
 }
 
-function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
+function LogPanelHeader({ count }: { count: number }) {
+    return (
+        <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+                <h2 className="text-base font-semibold">生成记录</h2>
+            </div>
+            <Tag className="m-0">{count}</Tag>
+        </div>
+    );
+}
+
+function LogPanelActions({ allSelected, hasSelectableLogs, hasSelectedLogs, onCreate, onDelete, onToggleAll }: LogPanelActionProps) {
+    return (
+        <div className="mb-4 flex flex-wrap gap-2">
+            <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreate}>
+                新建
+            </Button>
+            <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!hasSelectableLogs} onClick={onToggleAll}>
+                {allSelected ? "取消" : "全选"}
+            </Button>
+            <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!hasSelectedLogs} onClick={onDelete}>
+                删除
+            </Button>
+        </div>
+    );
+}
+
+function LogCard({ log, running, selected, active, onSelectedChange, onClick }: { log: GenerationLog; running: boolean; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
     const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
 
     return (
@@ -648,41 +711,78 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
         >
             <div className="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
                 <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
-                    <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
+                    <LogCardSelector log={log} running={running} selected={selected} onSelectedChange={onSelectedChange} />
                     <div className="min-w-0">
                         <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
-                        {thumbnails.length ? (
-                            <div className="mt-2 flex gap-1 overflow-hidden">
-                                {thumbnails.map((image, index) => (
-                                    <img key={`${log.id}-${index}`} src={image} alt="" className="size-8 shrink-0 rounded-md object-cover" />
-                                ))}
-                            </div>
-                        ) : null}
+                        <LogThumbnails logId={log.id} thumbnails={thumbnails} />
                     </div>
                 </div>
-                <div className="grid justify-items-end gap-2">
-                    <div className="flex gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="blue">
-                            成功 {log.successCount ?? log.imageCount}
-                        </Tag>
-                        {log.failCount ? (
-                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="red">
-                                失败 {log.failCount}
-                            </Tag>
-                        ) : null}
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.imageCount} 张</Tag>
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
-                            {formatDuration(log.durationMs)}
-                        </Tag>
-                    </div>
-                    <div className="flex justify-end">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.time}</Tag>
-                    </div>
-                </div>
+                <LogCardMeta log={log} />
             </div>
         </button>
+    );
+}
+
+function LogCardSelector({ log, running, selected, onSelectedChange }: { log: GenerationLog; running: boolean; selected: boolean; onSelectedChange: (checked: boolean) => void }) {
+    if (running && log.status === "生成中") return <LoaderCircle className="mt-0.5 size-4 animate-spin text-stone-500" />;
+    if (running) return <span className="mt-0.5 size-4" />;
+    return <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />;
+}
+
+function LogThumbnails({ logId, thumbnails }: { logId: string; thumbnails: string[] }) {
+    if (!thumbnails.length) return null;
+    return (
+        <div className="mt-2 flex gap-1 overflow-hidden">
+            {thumbnails.map((image, index) => (
+                <img key={`${logId}-${index}`} src={image} alt="" className="size-8 shrink-0 rounded-md object-cover" />
+            ))}
+        </div>
+    );
+}
+
+function LogCardMeta({ log }: { log: GenerationLog }) {
+    return (
+        <div className="grid justify-items-end gap-2">
+            <div className="flex gap-1">
+                <StatusTag log={log} />
+                {log.failCount ? (
+                    <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="red">
+                        失败 {log.failCount}
+                    </Tag>
+                ) : null}
+            </div>
+            <div className="flex flex-wrap justify-end gap-1">
+                <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.imageCount} 张</Tag>
+                <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
+                    {formatDuration(log.durationMs)}
+                </Tag>
+            </div>
+            <div className="flex justify-end">
+                <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.time}</Tag>
+            </div>
+        </div>
+    );
+}
+
+function StatusTag({ log }: { log: GenerationLog }) {
+    if (log.status === "生成中") {
+        return (
+            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="processing">
+                生成中
+            </Tag>
+        );
+    }
+    if (log.status === "已终止") {
+        return (
+            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="orange">
+                已终止
+            </Tag>
+        );
+    }
+    return (
+        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "成功" ? "blue" : "red"}>
+            {log.status === "成功" ? `成功 ${log.successCount ?? log.imageCount}` : "失败"}
+        </Tag>
     );
 }
 
@@ -752,6 +852,35 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         size: log.config?.size || log.size || "",
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
     };
+}
+
+function finishRunningLog(
+    log: GenerationLog,
+    result: Pick<GenerationLog, "durationMs" | "successCount" | "failCount" | "status" | "images">,
+) {
+    return {
+        ...log,
+        durationMs: result.durationMs,
+        successCount: result.successCount,
+        failCount: result.failCount,
+        status: result.status,
+        images: result.images,
+        thumbnails: result.images.map((image) => image.dataUrl).filter(Boolean),
+    };
+}
+
+function buildRunningLog({ text, model, snapshot, count }: { text: string; model: string; snapshot: GenerationSnapshot; count: number }) {
+    return buildLog({
+        prompt: text,
+        model,
+        config: { ...snapshot.config, count: String(count) },
+        references: snapshot.references,
+        durationMs: 0,
+        successCount: 0,
+        failCount: 0,
+        status: "生成中",
+        images: [],
+    });
 }
 
 function moveListItem<T>(items: T[], index: number, offset: number) {

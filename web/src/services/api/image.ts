@@ -17,6 +17,10 @@ export type ChatCompletionMessage = {
 
 const IMAGE_OUTPUT_FORMAT = "png";
 
+type ImageRequestOptions = {
+    signal?: AbortSignal;
+};
+
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
         const responseData = error.response?.data;
@@ -124,7 +128,7 @@ function assertChatStreamResponse(data: unknown) {
     if (apiError) throw new Error(apiError);
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string) {
+export async function requestGeneration(config: AiConfig, prompt: string, options?: ImageRequestOptions) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const isGrokImage = isGrokImageModel(config.model);
     const quality = isGrokImage ? undefined : normalizeQuality(config.quality);
@@ -143,6 +147,7 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
             },
             {
                 headers: aiHeaders(config, "application/json"),
+                signal: options?.signal,
             },
         );
         const images = await parseImagePayload(response.data, config);
@@ -153,7 +158,7 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage) {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: ImageRequestOptions) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const isGrokEdit = isGrokImageModel(config.model);
     const quality = isGrokEdit ? undefined : normalizeQuality(config.quality);
@@ -176,7 +181,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config) });
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config), signal: options?.signal });
         const parsedImages = await parseImagePayload(response.data, config);
         const images = isGrokEdit ? await applyGrokEditAspect(parsedImages, config.size) : parsedImages;
         refreshRemoteUser(config);
