@@ -101,11 +101,13 @@ export function ImageToolSettingsModal({
         });
         frames.push(firstFrame);
         const timer = window.setTimeout(sync, 120);
-        const resizeObserver = typeof ResizeObserver !== "undefined" && toolbar ? new ResizeObserver(sync) : null;
-        resizeObserver?.observe(toolbar);
-        toolbar?.childNodes.forEach((child) => {
-            if (child instanceof Element) resizeObserver?.observe(child);
-        });
+        const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(sync) : null;
+        if (toolbar) {
+            resizeObserver?.observe(toolbar);
+            toolbar.childNodes.forEach((child) => {
+                if (child instanceof Element) resizeObserver?.observe(child);
+            });
+        }
         sync();
         window.addEventListener("resize", syncPreviewScroll);
         return () => {

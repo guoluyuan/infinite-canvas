@@ -32,6 +32,8 @@ type userExtra struct {
 	LinuxDo any `json:"linuxDo,omitempty"`
 }
 
+var linuxDoHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
 func EnsureDefaultAdmin() error {
 	if strings.TrimSpace(config.Cfg.AdminUsername) == "" || strings.TrimSpace(config.Cfg.AdminPassword) == "" {
 		return nil
@@ -502,7 +504,7 @@ func linuxDoProfile(token string) (linuxDoUserResponse, error) {
 }
 
 func doLinuxDoJSON(req *http.Request, payload any) error {
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := linuxDoHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { App } from "antd";
 import { APP_VERSION } from "@/constant/env";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
@@ -6,13 +6,17 @@ import { parseChangelog, type ReleaseInfo } from "@/lib/release";
 const repositoryRawBaseUrl = "https://raw.githubusercontent.com/guoluyuan/infinite-canvas/main";
 const latestVersionUrl = `${repositoryRawBaseUrl}/VERSION`;
 const latestChangelogUrl = `${repositoryRawBaseUrl}/CHANGELOG.md`;
+const bundledReleaseUrl = "/api/app-release";
 
-function readLocalReleases(): ReleaseInfo[] {
-    try {
-        return JSON.parse(process.env.NEXT_PUBLIC_APP_RELEASES || "[]");
-    } catch {
-        return [];
-    }
+type BundledReleaseInfo = {
+    version: string;
+    releases: ReleaseInfo[];
+};
+
+async function fetchBundledReleaseInfo() {
+    const response = await fetch(bundledReleaseUrl);
+    if (!response.ok) throw new Error("当前版本信息读取失败");
+    return (await response.json()) as BundledReleaseInfo;
 }
 
 function toVersionParts(version: string) {
@@ -30,9 +34,9 @@ function isNewerVersion(latestVersion: string, currentVersion: string) {
 export function useVersionCheck() {
     const currentVersion = APP_VERSION;
     const { message } = App.useApp();
-    const localReleases = useMemo(readLocalReleases, []);
     const [latestVersion, setLatestVersion] = useState(currentVersion);
-    const [releases, setReleases] = useState<ReleaseInfo[]>(localReleases);
+    const [releases, setReleases] = useState<ReleaseInfo[]>([]);
+    const [releaseNotice, setReleaseNotice] = useState("");
     const [checking, setChecking] = useState(false);
     const [open, setOpen] = useState(false);
     const hasNewVersion = isNewerVersion(latestVersion, currentVersion);
@@ -59,18 +63,28 @@ export function useVersionCheck() {
                 const [version, changelog] = await Promise.all([versionResponse.text(), changelogResponse.text()]);
                 setLatestVersion(version.trim() || currentVersion);
                 if (changelog.trim()) setReleases(parseChangelog(changelog));
+                setReleaseNotice("");
                 if (showMessage) message.success("已获取最新版本信息");
                 return true;
             } catch {
-                setLatestVersion(currentVersion);
-                setReleases(localReleases);
-                if (showMessage) message.error("获取最新版本信息失败");
+                try {
+                    const bundled = await fetchBundledReleaseInfo();
+                    setLatestVersion(bundled.version || currentVersion);
+                    setReleases(bundled.releases);
+                    setReleaseNotice("远程读取失败，显示当前版本信息");
+                    if (showMessage) message.error("获取最新版本信息失败，已显示当前版本信息");
+                } catch {
+                    setLatestVersion(currentVersion);
+                    setReleases([]);
+                    setReleaseNotice("版本信息读取失败");
+                    if (showMessage) message.error("获取版本信息失败");
+                }
                 return false;
             } finally {
                 setChecking(false);
             }
         },
-        [currentVersion, localReleases, message],
+        [currentVersion, message],
     );
 
     useEffect(() => {
@@ -88,6 +102,7 @@ export function useVersionCheck() {
         openReleaseModal,
         latestVersion,
         releases,
+        releaseNotice,
         checking,
         hasNewVersion,
         checkLatestRelease,

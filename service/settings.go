@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"sort"
@@ -111,13 +110,7 @@ func ModelCost(modelName string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	modelName = strings.TrimSpace(modelName)
-	for _, item := range normalizePublicSetting(settings.Public).ModelChannel.ModelCosts {
-		if item.Model == modelName {
-			return item.Credits, nil
-		}
-	}
-	return 0, nil
+	return modelCostFromSettings(settings, modelName), nil
 }
 
 func normalizePrivateSetting(setting model.PrivateSetting) model.PrivateSetting {
@@ -181,22 +174,7 @@ func SelectModelChannel(modelName string) (model.ModelChannel, error) {
 	if err != nil {
 		return model.ModelChannel{}, err
 	}
-	channels := modelChannelsForModel(normalizePrivateSetting(settings.Private).Channels, modelName)
-	if len(channels) == 0 {
-		return model.ModelChannel{}, errors.New("没有可用模型渠道")
-	}
-	total := 0
-	for _, channel := range channels {
-		total += channel.Weight
-	}
-	hit := rand.Intn(total)
-	for _, channel := range channels {
-		hit -= channel.Weight
-		if hit < 0 {
-			return channel, nil
-		}
-	}
-	return channels[0], nil
+	return selectModelChannelFromSettings(settings, modelName)
 }
 
 func BuildModelChannelURL(channel model.ModelChannel, path string) string {

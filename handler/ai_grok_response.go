@@ -88,7 +88,7 @@ func downloadGrokImageAsBase64(ctx context.Context, imageURL string, apiKey stri
 		return "", err
 	}
 	request.Header.Set("Authorization", "Bearer "+apiKey)
-	response, err := http.DefaultClient.Do(request)
+	response, err := aiProxyHTTPClient.Do(request)
 	if err != nil {
 		return "", err
 	}

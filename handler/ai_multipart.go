@@ -20,7 +20,7 @@ func replaceMultipartValue(body []byte, contentType string, key string, value st
 	if err != nil {
 		return nil, "", err
 	}
-	form, err := multipart.NewReader(bytes.NewReader(body), params["boundary"]).ReadForm(32 << 20)
+	form, err := multipart.NewReader(bytes.NewReader(body), params["boundary"]).ReadForm(aiProxyMultipartMemory)
 	if err != nil {
 		return nil, "", err
 	}

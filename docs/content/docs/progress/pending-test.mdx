@@ -5,6 +5,10 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- 版本更新弹窗改为打开时再读取当前版本发布信息，不再把完整 `CHANGELOG.md` 注入前端构建环境；远程 GitHub 读取失败时会明确提示并展示当前版本信息，需要验证弹窗可正常显示当前/最新版本和更新日志。
+- 后端 AI 代理改为使用带超时的专用 HTTP Client，并在入口显式限制请求体大小；需要验证图片、图生图、视频、音频和文本生成请求仍能正常转发，超大请求会返回明确错误。
+- 后端 AI 代理选择模型渠道和读取模型算力点改为单次读取设置快照，减少每次生成请求的重复配置读取；需要验证后台渠道权重、模型算力点扣除和失败退款行为不变。
+- 前端构建不再忽略 TypeScript 错误；需要验证本地构建会正常暴露真实类型问题，而不是生成可能带错误的产物。
 - 右上角 GitHub 图标和版本更新检查改为使用 `guoluyuan/infinite-canvas` 仓库；需要验证点击 GitHub 图标打开当前仓库，版本弹窗读取当前仓库的 `VERSION` 和 `CHANGELOG.md`。
 - GitHub 首页 README 和文档站快速开始改为从 `guoluyuan/infinite-canvas` clone 后用 `docker-compose up -d` 部署，并保留 Docker Hub 镜像与 Watchtower 自动更新说明；需要验证 GitHub 页面链接可正常打开。
 - Docker Compose 主应用镜像改为 `mp740429299/guogai-infinite-canvas:latest`，并新增 Watchtower 自动更新服务；需要验证推送同标签镜像后容器会自动拉取新镜像、重启应用并清理旧镜像。

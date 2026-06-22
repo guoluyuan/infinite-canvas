@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,9 +11,20 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/basketikun/infinite-canvas/service"
 )
+
+const mebibyte = 1024 * 1024
+const aiProxyMaxBodyBytes = 128 * mebibyte
+const aiProxyMultipartMemory = 32 * mebibyte
+const aiProxyHeaderTimeout = 5 * time.Minute
+
+var aiProxyHTTPClient = &http.Client{
+	Transport: &http.Transport{ResponseHeaderTimeout: aiProxyHeaderTimeout},
+}
+var errAIRequestTooLarge = &aiError{"请求内容过大"}
 
 func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 	proxyAIRequest(w, r, "/images/generations")
@@ -54,7 +66,7 @@ func proxyAIGetRequest(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	path = resolveAIProxyPath(channel.BaseURL, modelName, path)
-	request, err := http.NewRequest(http.MethodGet, service.BuildModelChannelURL(channel, path), nil)
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, service.BuildModelChannelURL(channel, path), nil)
 	if err != nil {
 		Fail(w, "AI 接口请求失败")
 		return
@@ -67,7 +79,7 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 	body, contentType, modelName, err := readAIRequest(r)
 	if err != nil {
 		log.Printf("AI proxy request read failed: %v", err)
-		Fail(w, "AI 接口请求失败")
+		Fail(w, aiRequestErrorMessage(err))
 		return
 	}
 	user, ok := service.UserFromContext(r.Context())
@@ -75,27 +87,22 @@ func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
 		Fail(w, "未登录或权限不足")
 		return
 	}
-	credits, err := service.ModelCost(modelName)
+	route, err := service.ResolveModelRoute(modelName)
 	if err != nil {
-		log.Printf("AI proxy read model cost failed: model=%s err=%v", modelName, err)
+		log.Printf("AI proxy resolve model route failed: model=%s err=%v", modelName, err)
 		Fail(w, "AI 接口请求失败")
 		return
 	}
-	credits *= readAIRequestCount(body, contentType)
-	channel, err := service.SelectModelChannel(modelName)
-	if err != nil {
-		log.Printf("AI proxy select channel failed: model=%s err=%v", modelName, err)
-		Fail(w, "AI 接口请求失败")
-		return
-	}
+	credits := route.Credits * readAIRequestCount(body, contentType)
 	body, contentType, err = normalizeAIProxyRequestBody(body, contentType, modelName, path)
 	if err != nil {
 		log.Printf("AI proxy normalize request failed: model=%s path=%s err=%v", modelName, path, err)
 		Fail(w, "AI 接口请求失败")
 		return
 	}
+	channel := route.Channel
 	path = resolveAIProxyPath(channel.BaseURL, modelName, path)
-	request, err := http.NewRequest(http.MethodPost, service.BuildModelChannelURL(channel, path), bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, service.BuildModelChannelURL(channel, path), bytes.NewReader(body))
 	if err != nil {
 		log.Printf("AI proxy build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, path), err)
 		Fail(w, "AI 接口请求失败")
@@ -144,7 +151,7 @@ type aiProxyCopyOptions struct {
 }
 
 func copyAIResponse(w http.ResponseWriter, options aiProxyCopyOptions) {
-	response, err := http.DefaultClient.Do(options.Request)
+	response, err := aiProxyHTTPClient.Do(options.Request)
 	if err != nil {
 		log.Printf("AI proxy request failed: url=%s err=%v", options.Request.URL.String(), err)
 		options.fail()
@@ -167,7 +174,9 @@ func copyAIResponse(w http.ResponseWriter, options aiProxyCopyOptions) {
 	}
 	copyAIResponseHeaders(w, response)
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	if _, err := io.Copy(w, response.Body); err != nil {
+		log.Printf("AI proxy response copy failed: url=%s err=%v", options.Request.URL.String(), err)
+	}
 }
 
 func (options aiProxyCopyOptions) fail() {
@@ -193,7 +202,7 @@ func copyAIResponseHeaders(w http.ResponseWriter, response *http.Response) {
 
 func readAIRequest(r *http.Request) ([]byte, string, string, error) {
 	contentType := r.Header.Get("Content-Type")
-	body, err := io.ReadAll(r.Body)
+	body, err := readLimitedAIRequestBody(r)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -213,13 +222,31 @@ func readAIRequest(r *http.Request) ([]byte, string, string, error) {
 	return body, contentType, modelName, nil
 }
 
+func readLimitedAIRequestBody(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, aiProxyMaxBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > aiProxyMaxBodyBytes {
+		return nil, errAIRequestTooLarge
+	}
+	return body, nil
+}
+
+func aiRequestErrorMessage(err error) string {
+	if errors.Is(err, errAIRequestTooLarge) || errors.Is(err, errMissingModel) {
+		return err.Error()
+	}
+	return "AI 接口请求失败"
+}
+
 func readMultipartModel(body []byte, contentType string) string {
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		return ""
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
-	form, err := reader.ReadForm(32 << 20)
+	form, err := reader.ReadForm(aiProxyMultipartMemory)
 	if err != nil {
 		return ""
 	}
@@ -237,7 +264,7 @@ func readAIRequestCount(body []byte, contentType string) int {
 		if err != nil {
 			return count
 		}
-		form, err := multipart.NewReader(bytes.NewReader(body), params["boundary"]).ReadForm(32 << 20)
+		form, err := multipart.NewReader(bytes.NewReader(body), params["boundary"]).ReadForm(aiProxyMultipartMemory)
 		if err != nil {
 			return count
 		}
