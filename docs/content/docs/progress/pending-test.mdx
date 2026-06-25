@@ -5,6 +5,9 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- GitHub Actions 主应用镜像发布链路改为同步推送 `ghcr.io/guoluyuan/infinite-canvas` 和 `mp740429299/guogai-infinite-canvas`，tag 发布时同时生成 `latest` 与版本号镜像；需要配置并验证 `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN` secrets 后，Watchtower 能拉取新 Docker Hub 镜像。
+- 版本信息弹窗将“检查更新”改为“刷新信息”，检测到新版本时显示 Docker 手动更新命令并支持复制；需要验证按钮不会被误解为直接升级容器，复制命令可正常提示成功。
+- Dockerfile 支持通过 `GOPROXY` 构建参数配置 Go 模块代理；需要验证默认构建不受影响，国内网络可用 `--build-arg GOPROXY=https://goproxy.cn,direct` 构建。
 - 版本更新弹窗改为打开时再读取当前版本发布信息，不再把完整 `CHANGELOG.md` 注入前端构建环境；远程 GitHub 读取失败时会明确提示并展示当前版本信息，需要验证弹窗可正常显示当前/最新版本和更新日志。
 - 后端 AI 代理改为使用带超时的专用 HTTP Client，并在入口显式限制请求体大小；需要验证图片、图生图、视频、音频和文本生成请求仍能正常转发，超大请求会返回明确错误。
 - 后端 AI 代理选择模型渠道和读取模型算力点改为单次读取设置快照，减少每次生成请求的重复配置读取；需要验证后台渠道权重、模型算力点扣除和失败退款行为不变。

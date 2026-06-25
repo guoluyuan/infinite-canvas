@@ -13,6 +13,8 @@ RUN bun run build
 FROM golang:1.25-alpine AS api-build
 
 WORKDIR /app
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=$GOPROXY
 COPY go.mod go.sum ./
 COPY config ./config
 COPY handler ./handler
